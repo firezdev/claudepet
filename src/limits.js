@@ -8,23 +8,74 @@ const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "
 // "Oct 26, 12:20am", "Oct 30, 11pm", "3pm" — how `/usage` words a reset.
 const RESET_TEXT = /^(?:([a-z]{3})[a-z]*\.? (\d{1,2}),?\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)$/i;
 
-// When window `w` resets: its timestamp, or its `/usage` text read in local time.
+// Year, month (0-11) and day at unix time `t` in `zone`, or in local time without one.
+function dateIn(zone, t) {
+  if (!zone) {
+    const d = new Date(t * 1000);
+    return { year: d.getFullYear(), month: d.getMonth(), day: d.getDate() };
+  }
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: zone, year: "numeric", month: "numeric", day: "numeric" })
+    .formatToParts(new Date(t * 1000));
+  const get = (type) => Number(parts.find((p) => p.type === type).value);
+  return { year: get("year"), month: get("month") - 1, day: get("day") };
+}
+
+// How far `zone` is ahead of UTC at unix time `t`, in seconds.
+function zoneOffset(zone, t) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+  }).formatToParts(new Date(t * 1000));
+  const get = (type) => Number(parts.find((p) => p.type === type).value);
+  return Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second")) / 1000 - t;
+}
+
+// Unix time of a wall-clock time in `zone` (local time without one). Day overflow rolls over.
+function wallTime(zone, year, month, day, hour, minute) {
+  if (!zone) return new Date(year, month, day, hour, minute).getTime() / 1000;
+  const asUtc = Date.UTC(year, month, day, hour, minute) / 1000;
+  // Twice, so a guess on the other side of a DST switch is corrected.
+  const first = asUtc - zoneOffset(zone, asUtc);
+  return asUtc - zoneOffset(zone, first);
+}
+
+// `/usage` names the zone its reset times are in; one this runtime doesn't know is ignored.
+function knownZone(zone) {
+  if (!zone) return null;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return zone;
+  } catch {
+    return null;
+  }
+}
+
+// When window `w` resets: its timestamp, or its `/usage` text read in the zone `/usage`
+// gives (the account's, which may not be this computer's), else in local time.
 export function resetTime(w, now) {
   if (w.resets_at) return w.resets_at;
   const m = w.resets && w.resets.trim().match(RESET_TEXT);
   if (!m) return null;
   const [, month, day, hour, minute, ampm] = m;
-  const base = new Date(now * 1000);
+  const zone = knownZone(w.zone);
+  const today = dateIn(zone, now);
   const h = (Number(hour) % 12) + (ampm.toLowerCase() === "pm" ? 12 : 0);
-  const monthIndex = month ? MONTHS.indexOf(month.toLowerCase()) : base.getMonth();
+  const monthIndex = month ? MONTHS.indexOf(month.toLowerCase()) : today.month;
   if (monthIndex < 0) return null;
-  const date = new Date(base.getFullYear(), monthIndex, month ? Number(day) : base.getDate(), h, Number(minute || 0));
-  let at = date.getTime() / 1000;
+  const dayOfMonth = month ? Number(day) : today.day;
+  const min = Number(minute || 0);
+  let at = wallTime(zone, today.year, monthIndex, dayOfMonth, h, min);
   // A reset is always ahead: "3pm" after 3pm means tomorrow, "Jan 2" in December next year.
   if (at < now - 5 * 60) {
-    if (month) date.setFullYear(date.getFullYear() + 1);
-    else date.setDate(date.getDate() + 1);
-    at = date.getTime() / 1000;
+    at = month
+      ? wallTime(zone, today.year + 1, monthIndex, dayOfMonth, h, min)
+      : wallTime(zone, today.year, monthIndex, dayOfMonth + 1, h, min);
   }
   return at;
 }

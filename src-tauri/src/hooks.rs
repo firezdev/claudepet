@@ -96,12 +96,14 @@ pub struct Window {
     pub resets_at: Option<u64>,
     /// When it resets as `/usage` words it ("Oct 26, 12:20am"), if there's no timestamp.
     pub resets: Option<String>,
+    /// The time zone `/usage` gives that wall-clock time in ("Europe/Moscow").
+    pub zone: Option<String>,
 }
 
 fn limit_window(v: &Value) -> Option<Window> {
     let used = v.get("used_percentage")?.as_f64()?;
     let resets_at = v.get("resets_at").and_then(|r| r.as_u64().or_else(|| r.as_f64().map(|f| f as u64)));
-    Some(Window { used, resets_at, resets: None })
+    Some(Window { used, resets_at, resets: None, zone: None })
 }
 
 /// One "Current …: 67% used · resets Oct 26, 12:20am (Europe/Moscow)" line of `/usage`.
@@ -109,12 +111,13 @@ fn usage_line(text: &str, label: &str) -> Option<Window> {
     let line = text.lines().map(str::trim).find(|l| l.starts_with(label))?;
     let rest = line[label.len()..].trim_start_matches(':').trim();
     let used: f64 = rest.split('%').next()?.trim().parse().ok()?;
-    let resets = rest
-        .split_once("resets")
-        .map(|(_, r)| r.trim())
-        .map(|r| r.split(" (").next().unwrap_or(r).trim().to_string())
-        .filter(|r| !r.is_empty());
-    Some(Window { used, resets_at: None, resets })
+    let reset = rest.split_once("resets").map(|(_, r)| r.trim()).unwrap_or_default();
+    let (when, zone) = match reset.split_once(" (") {
+        Some((when, zone)) => (when.trim(), zone.trim_end_matches(')').trim()),
+        None => (reset, ""),
+    };
+    let text = |s: &str| (!s.is_empty()).then(|| s.to_string());
+    Some(Window { used, resets_at: None, resets: text(when), zone: text(zone) })
 }
 
 /// Reads the plan limits out of `claude -p /usage` output.
@@ -833,8 +836,8 @@ mod tests {
         assert_eq!(
             parse_limits(&status),
             Some(ClaudeEvent::Limits {
-                five_hour: Some(Window { used: 23.5, resets_at: Some(1767225600), resets: None }),
-                seven_day: Some(Window { used: 41.0, resets_at: None, resets: None }),
+                five_hour: Some(Window { used: 23.5, resets_at: Some(1767225600), resets: None, zone: None }),
+                seven_day: Some(Window { used: 41.0, resets_at: None, resets: None, zone: None }),
             })
         );
         assert_eq!(parse_limits(&json!({ "model": {} })), None);
@@ -849,8 +852,18 @@ mod tests {
         assert_eq!(
             parse_usage(text),
             Some(ClaudeEvent::Limits {
-                five_hour: Some(Window { used: 67.0, resets_at: None, resets: Some("Oct 26, 12:20am".into()) }),
-                seven_day: Some(Window { used: 80.5, resets_at: None, resets: Some("Oct 30, 11pm".into()) }),
+                five_hour: Some(Window {
+                    used: 67.0,
+                    resets_at: None,
+                    resets: Some("Oct 26, 12:20am".into()),
+                    zone: Some("Europe/Moscow".into())
+                }),
+                seven_day: Some(Window {
+                    used: 80.5,
+                    resets_at: None,
+                    resets: Some("Oct 30, 11pm".into()),
+                    zone: Some("Europe/Moscow".into())
+                }),
             })
         );
         assert_eq!(parse_usage("Not logged in"), None);
