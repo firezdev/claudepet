@@ -256,9 +256,20 @@ fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<String, Stri
 }
 
 /// The text of `/usage` (plan limits), run locally by the CLI: no model call, no tokens.
+/// It runs every few minutes, so it must not leave a saved session behind or start the
+/// user's MCP servers each time.
 pub fn usage(cli: &Path, workdir: &Path) -> Result<String, String> {
     let mut cmd = Command::new(cli);
-    cmd.args(["-p", "/usage", "--output-format", "text", "--settings", r#"{"disableAllHooks":true}"#])
+    cmd.args([
+        "-p",
+        "/usage",
+        "--output-format",
+        "text",
+        "--no-session-persistence",
+        "--strict-mcp-config",
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
+    ])
         .current_dir(workdir)
         .env("CLAWD_INTERNAL", "1");
     run_with_timeout(&mut cmd, Duration::from_secs(60))
