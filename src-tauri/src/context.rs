@@ -113,11 +113,19 @@ pub fn spawn(enabled: Arc<AtomicBool>, mut emit: impl FnMut(ContextEvent) + Send
 #[cfg(target_os = "linux")]
 mod platform {
     use super::KeyBits;
+    use std::{
+        cell::RefCell,
+        time::{Duration, Instant},
+    };
     use x11rb::{
         connection::Connection,
         protocol::xproto::{Atom, AtomEnum, ConnectionExt, Window},
         rust_connection::RustConnection,
     };
+
+    /// How long what we know about the focused window (owner, state, frame margins)
+    /// is trusted before it's read again; its position is read every poll.
+    const STANDING_TTL: Duration = Duration::from_millis(500);
 
     pub struct Probe {
         conn: RustConnection,
@@ -126,6 +134,16 @@ mod platform {
         net_wm_name: Atom,
         utf8_string: Atom,
         frame: FrameAtoms,
+        standing: RefCell<Option<(Window, Instant, Standing)>>,
+    }
+
+    /// Whether Clawd can stand on a window, and the margins between its X geometry and
+    /// the visible frame: [left, top, right, bottom] to subtract from x, y and add to w, h.
+    #[derive(Clone, Copy)]
+    enum Standing {
+        Own,
+        No,
+        Yes([i32; 4]),
     }
 
     /// EWMH properties that say where a window's frame is and whether it's one to stand on.
@@ -176,6 +194,7 @@ mod platform {
                 net_wm_name,
                 utf8_string,
                 frame,
+                standing: RefCell::new(None),
             })
         }
 
@@ -214,28 +233,58 @@ mod platform {
             Some((app, String::from_utf8_lossy(&title).into_owned()))
         }
 
-        /// None when the focused window is Clawd's own overlay: clicking him
-        /// shouldn't knock him off the window he's sitting on.
-        pub fn frame(&self) -> Option<Option<[i32; 4]>> {
+        /// Reads what rarely changes about `window`: five property requests, so it's cached.
+        fn standing(&self, window: Window) -> Standing {
+            let cached = *self.standing.borrow();
+            if let Some((w, at, standing)) = cached {
+                if w == window && at.elapsed() < STANDING_TTL {
+                    return standing;
+                }
+            }
+            let standing = self.read_standing(window);
+            *self.standing.borrow_mut() = Some((window, Instant::now(), standing));
+            standing
+        }
+
+        fn read_standing(&self, window: Window) -> Standing {
             let a = &self.frame;
-            let Some(window) = self.focused() else {
-                return Some(None);
-            };
             let cardinal: Atom = AtomEnum::CARDINAL.into();
             let atom_type: Atom = AtomEnum::ATOM.into();
             let pid = self.property(window, a.pid, cardinal).map(|r| words(&r));
             if pid.as_ref().and_then(|p| p.first()) == Some(&std::process::id()) {
-                return None;
+                return Standing::Own;
             }
             let state = self.property(window, a.state, atom_type).map(|r| words(&r)).unwrap_or_default();
             let maximized = state.contains(&a.maximized_vert) && state.contains(&a.maximized_horz);
             if maximized || state.contains(&a.hidden) || state.contains(&a.fullscreen) {
-                return Some(None);
+                return Standing::No;
             }
             let kinds = self.property(window, a.window_type, atom_type).map(|r| words(&r)).unwrap_or_default();
             if kinds.contains(&a.type_desktop) || kinds.contains(&a.type_dock) {
-                return Some(None);
+                return Standing::No;
             }
+            // The window manager's title bar sits outside the window (_NET_FRAME_EXTENTS);
+            // GTK's own title bars sit inside, under a shadow margin (_GTK_FRAME_EXTENTS).
+            let extents = |atom| {
+                let v = self.property(window, atom, cardinal).map(|r| words(&r)).unwrap_or_default();
+                if v.len() == 4 { [v[0], v[1], v[2], v[3]].map(|e| e as i32) } else { [0; 4] }
+            };
+            let [l, r, t, b] = extents(a.frame_extents);
+            let [gl, gr, gt, gb] = extents(a.gtk_frame_extents);
+            Standing::Yes([l - gl, t - gt, r - gr, b - gb])
+        }
+
+        /// None when the focused window is Clawd's own overlay: clicking him
+        /// shouldn't knock him off the window he's sitting on.
+        pub fn frame(&self) -> Option<Option<[i32; 4]>> {
+            let Some(window) = self.focused() else {
+                return Some(None);
+            };
+            let [l, t, r, b] = match self.standing(window) {
+                Standing::Own => return None,
+                Standing::No => return Some(None),
+                Standing::Yes(margins) => margins,
+            };
             let Some(geometry) = self.conn.get_geometry(window).ok().and_then(|c| c.reply().ok()) else {
                 return Some(None);
             };
@@ -245,15 +294,7 @@ mod platform {
             };
             let (x, y) = (i32::from(origin.dst_x), i32::from(origin.dst_y));
             let (w, h) = (i32::from(geometry.width), i32::from(geometry.height));
-            // The window manager's title bar sits outside the window (_NET_FRAME_EXTENTS);
-            // GTK's own title bars sit inside, under a shadow margin (_GTK_FRAME_EXTENTS).
-            let extents = |atom| {
-                let v = self.property(window, atom, cardinal).map(|r| words(&r)).unwrap_or_default();
-                if v.len() == 4 { [v[0], v[1], v[2], v[3]].map(|e| e as i32) } else { [0; 4] }
-            };
-            let [l, r, t, b] = extents(a.frame_extents);
-            let [gl, gr, gt, gb] = extents(a.gtk_frame_extents);
-            let rect = [x - l + gl, y - t + gt, x + w + r - gr, y + h + b - gb];
+            let rect = [x - l, y - t, x + w + r, y + h + b];
             if rect[2] - rect[0] < 160 || rect[3] - rect[1] < 80 {
                 return Some(None);
             }
