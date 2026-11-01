@@ -410,6 +410,12 @@ body.held {
   color: #ffffff;
 }
 
+.card-row button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+
 .card-row button:focus-visible {
   outline: 2px dashed var(--accent);
   outline-offset: 4px;

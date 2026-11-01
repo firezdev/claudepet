@@ -692,6 +692,21 @@ function finishReminder(snooze) {
   if (reminders.length) showReminder();
 }
 
+// The card pops up under wherever the cursor happens to be; a click meant for the
+// window behind it must not answer it. Its buttons only work after a short moment.
+const PERMISSION_ARM_MS = 800;
+let permissionArmTimer = 0;
+
+function armPermissionButtons() {
+  clearTimeout(permissionArmTimer);
+  permissionAllow.disabled = true;
+  permissionDeny.disabled = true;
+  permissionArmTimer = setTimeout(() => {
+    permissionAllow.disabled = false;
+    permissionDeny.disabled = false;
+  }, PERMISSION_ARM_MS);
+}
+
 // Claude Code wants to use a tool: Allow / Deny on a card, answered back through Rust.
 // Unanswered questions time out there and Claude Code asks in its own window instead.
 function showPermission() {
@@ -713,6 +728,7 @@ function showPermission() {
   // For a risky command the highlighted, easy-to-hit button is "Deny".
   permissionAllow.classList.toggle("primary", !danger);
   permissionDeny.classList.toggle("primary", danger);
+  armPermissionButtons();
   permissionBox.classList.add("open");
   pet.waveUntil = nowSec() + 2.5;
   pet.hop(420);
