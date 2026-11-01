@@ -28,7 +28,10 @@ const MARKER: &str = "127.0.0.1:47823/hook/";
 const STATUS_MARKER: &str = "127.0.0.1:47823/status/";
 const PERMISSION_MARKER: &str = "127.0.0.1:47823/permission/";
 /// How long Clawd's card waits for a click before Claude Code asks the usual way.
-const PERMISSION_WAIT: Duration = Duration::from_secs(60);
+/// Claude Code holds the question while the hook runs, so this is how long a user who
+/// isn't looking at Clawd waits for the prompt in the terminal: enough to read the card
+/// and click, short enough not to stall a session.
+const PERMISSION_WAIT: Duration = Duration::from_secs(25);
 const EVENTS: [&str; 7] =
     ["UserPromptSubmit", "PreToolUse", "Stop", "Notification", "SessionEnd", "SubagentStop", "StopFailure"];
 const MAX_BODY: usize = 8 << 20;
