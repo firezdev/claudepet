@@ -204,10 +204,10 @@ fn save_vitals(state: State<'_, Arc<AppState>>, mood: f64, food: f64) {
 
 /// Sets a reminder; returns when it goes off (unix seconds).
 #[tauri::command]
-fn add_reminder(state: State<'_, Arc<AppState>>, minutes: f64, text: String) -> u64 {
-    let at = reminders::add(&state, minutes, &text);
+fn add_reminder(state: State<'_, Arc<AppState>>, minutes: f64, text: String) -> Result<u64, String> {
+    let at = reminders::add(&state, minutes, &text)?;
     tray::refresh(&state);
-    at
+    Ok(at)
 }
 
 #[tauri::command]

@@ -15,15 +15,27 @@ pub fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
-/// Adds a reminder `minutes` from now; returns when it's due (unix seconds).
-pub fn add(state: &AppState, minutes: f64, text: &str) -> u64 {
+/// Puts `reminder` in its place in `list`, unless the list is full.
+fn insert(list: &mut Vec<Reminder>, reminder: Reminder) -> bool {
+    if list.len() >= MAX_REMINDERS {
+        return false;
+    }
+    let index = list.partition_point(|r| r.at <= reminder.at);
+    list.insert(index, reminder);
+    true
+}
+
+/// Adds a reminder `minutes` from now; returns when it's due (unix seconds), or an
+/// error when there are too many already (nothing set rather than one silently lost).
+pub fn add(state: &AppState, minutes: f64, text: &str) -> Result<u64, String> {
     let at = now() + (minutes.max(0.0) * 60.0).round() as u64;
-    state.update(|s| {
-        s.reminders.push(Reminder { at, text: text.trim().to_string() });
-        s.reminders.sort_by_key(|r| r.at);
-        s.reminders.truncate(MAX_REMINDERS);
-    });
-    at
+    let mut added = false;
+    state.update(|s| added = insert(&mut s.reminders, Reminder { at, text: text.trim().to_string() }));
+    if added {
+        Ok(at)
+    } else {
+        Err(format!("too many reminders (at most {MAX_REMINDERS})"))
+    }
 }
 
 pub fn clear(state: &AppState) -> usize {
@@ -65,6 +77,19 @@ pub fn spawn(state: Arc<AppState>, fire: impl Fn(&Reminder) + Send + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_full_list_refuses_instead_of_dropping() {
+        let r = |at, text: &str| Reminder { at, text: text.into() };
+        let mut list: Vec<Reminder> = (0..MAX_REMINDERS as u64).map(|i| r(i * 10, "x")).collect();
+        assert!(!insert(&mut list, r(5, "early")));
+        assert!(!insert(&mut list, r(10_000, "late")));
+        assert_eq!(list.len(), MAX_REMINDERS);
+        list.pop();
+        assert!(insert(&mut list, r(15, "between")));
+        assert_eq!(list[2].text, "between");
+        assert!(list.windows(2).all(|w| w[0].at <= w[1].at));
+    }
 
     #[test]
     fn takes_only_due_reminders() {

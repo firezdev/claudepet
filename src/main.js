@@ -471,8 +471,15 @@ function chatErrorPhrase(error) {
 
 const clockTime = (unix) => new Date(unix * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
+// Resolves with when the reminder goes off, or null when it couldn't be set
+// (too many already): then Clawd says so instead of promising.
 function setReminder(minutes, text) {
-  return invoke("add_reminder", { minutes, text: text || phrase("remind_default") }).then((at) => at || 0);
+  return invoke("add_reminder", { minutes, text: text || phrase("remind_default") })
+    .then((at) => at || null)
+    .catch(() => {
+      say("remind_full", true);
+      return null;
+    });
 }
 
 const UNITS = { s: 1 / 60, m: 1, h: 60 };
@@ -538,7 +545,7 @@ function localIntent(message) {
     const amount = parseFloat(inMatch[1].replace(",", "."));
     const unit = inMatch[2].toLowerCase();
     const scale = /^(с|s)/.test(unit) ? UNITS.s : /^(ч|h)/.test(unit) ? UNITS.h : UNITS.m;
-    setReminder(amount * scale, reminderText(message, inMatch)).then((at) => say("remind_set", true, { time: clockTime(at) }));
+    setReminder(amount * scale, reminderText(message, inMatch)).then((at) => at && say("remind_set", true, { time: clockTime(at) }));
     return true;
   }
   const atMatch = message.match(REMIND_AT);
@@ -547,7 +554,7 @@ function localIntent(message) {
     target.setHours(+atMatch[1], +atMatch[2], 0, 0);
     if (target <= new Date()) target.setDate(target.getDate() + 1);
     const minutes = (target - new Date()) / 60000;
-    setReminder(minutes, reminderText(message, atMatch)).then((at) => say("remind_set", true, { time: clockTime(at) }));
+    setReminder(minutes, reminderText(message, atMatch)).then((at) => at && say("remind_set", true, { time: clockTime(at) }));
     return true;
   }
   return false;
@@ -576,7 +583,7 @@ function askClawd(message) {
       pet.hop(260);
       if (reply.remind) {
         setReminder(reply.remind.minutes, reply.remind.text).then((at) => {
-          if (!reply.text) say("remind_set", true, { time: clockTime(at) });
+          if (at && !reply.text) say("remind_set", true, { time: clockTime(at) });
         });
       }
       if (reply.memory) {
