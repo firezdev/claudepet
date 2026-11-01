@@ -1,5 +1,6 @@
 //! Self-update from GitHub Releases (tauri-plugin-updater). Releases are signed:
-//! the public key in tauri.conf.json lets only builds signed with our key in.
+//! the public key lets only builds signed with the maintainer's key in. It isn't in
+//! tauri.conf.json: the release workflow puts it in, so local builds don't update.
 
 use std::{sync::Arc, thread, time::Duration};
 
@@ -11,8 +12,22 @@ use crate::{tray, AppState};
 const FIRST_CHECK: Duration = Duration::from_secs(90);
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// Whether this build knows the key releases are signed with.
+fn configured(app: &AppHandle) -> bool {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|u| u.get("pubkey"))
+        .and_then(|k| k.as_str())
+        .is_some_and(|k| !k.trim().is_empty())
+}
+
 /// Checks shortly after start and then every few hours, quietly.
 pub fn spawn(app: AppHandle, state: Arc<AppState>) {
+    if !configured(&app) {
+        return;
+    }
     thread::spawn(move || {
         thread::sleep(FIRST_CHECK);
         loop {
@@ -24,6 +39,12 @@ pub fn spawn(app: AppHandle, state: Arc<AppState>) {
 
 /// Looks for a newer release; `manual` checks also report "you're up to date" and errors.
 pub async fn check(app: &AppHandle, state: &AppState, manual: bool) {
+    if !configured(app) {
+        if manual {
+            tray::notice(app, "update_unconfigured");
+        }
+        return;
+    }
     let found = match app.updater() {
         Ok(updater) => updater.check().await.map_err(|e| e.to_string()),
         Err(e) => Err(e.to_string()),

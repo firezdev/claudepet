@@ -134,6 +134,7 @@ export const PHRASES = {
     update_available: ["Вышла новая версия! Обнови меня в трее", "Есть обновление — загляни в трей"],
     update_none: ["У тебя самая свежая версия", "Обновлений нет, я и так свежий"],
     update_error: ["Не получилось проверить обновления", "С обновлением что-то не так…"],
+    update_unconfigured: ["Эта сборка не обновляется сама: в ней нет ключа релизов"],
     update_installing: ["Обновляюсь… Сейчас вернусь!", "Скачиваю новую версию себя"],
   },
   en: {
@@ -270,6 +271,7 @@ export const PHRASES = {
     update_available: ["A new version is out! Update me from the tray", "Update available, check the tray"],
     update_none: ["You have the latest version", "No updates, I'm fresh already"],
     update_error: ["Couldn't check for updates", "Something went wrong with the update…"],
+    update_unconfigured: ["This build can't update itself: it has no release key"],
     update_installing: ["Updating… Be right back!", "Downloading a new me"],
   },
 };

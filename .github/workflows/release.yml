@@ -1,7 +1,10 @@
 # Builds signed installers for a version tag (git tag v0.2.0 && git push --tags)
 # and publishes them as a GitHub release together with latest.json, which the
-# in-app updater reads. Needs the TAURI_SIGNING_PRIVATE_KEY secret (and
-# TAURI_SIGNING_PRIVATE_KEY_PASSWORD if the key has one).
+# in-app updater reads. Make a key pair once with `cargo tauri signer generate`, then
+# set the TAURI_UPDATER_PUBKEY repository variable to the public key and the
+# TAURI_SIGNING_PRIVATE_KEY secret (and TAURI_SIGNING_PRIVATE_KEY_PASSWORD if the
+# key has one) to the private key. The public key goes into the build from here,
+# so tauri.conf.json carries none and local builds don't self-update.
 name: Release
 
 on:
@@ -37,6 +40,18 @@ jobs:
       - name: Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
+      - name: Updater key
+        shell: bash
+        env:
+          PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+        run: |
+          if [ -z "$PUBKEY" ]; then
+            echo "::error::Set the TAURI_UPDATER_PUBKEY repository variable (cargo tauri signer generate)"
+            exit 1
+          fi
+          printf '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"%s"}}}' "$PUBKEY" \
+            > src-tauri/release.conf.json
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -48,3 +63,4 @@ jobs:
           releaseName: Clawd ${{ github.ref_name }}
           releaseDraft: false
           includeUpdaterJson: true
+          args: --config ${{ github.workspace }}/src-tauri/release.conf.json

@@ -176,22 +176,29 @@ cargo tauri build
 
 ## Обновления
 
-Clawd через полторы минуты после запуска и потом раз в 6 часов проверяет GitHub Releases
-(адрес — `plugins.updater.endpoints` в `tauri.conf.json`). Если вышла новая версия, он скажет об этом,
-а в трее появится «Обновить до vX» — скачает, установит и перезапустится сам. Обновления подписаны:
-публичный ключ лежит в `tauri.conf.json`, и чужую сборку Clawd не поставит.
+Сборки из релизов через полторы минуты после запуска и потом раз в 6 часов проверяют GitHub Releases
+(адрес — `plugins.updater.endpoints` в `tauri.conf.json`). Если вышла новая версия, Clawd скажет об этом,
+а в трее появится «Обновить до vX» — скачает, установит и перезапустится сам. Обновления подписаны,
+и чужую сборку Clawd не поставит. Публичного ключа в `tauri.conf.json` нет: его подставляет workflow
+релиза, поэтому локальные сборки сами не обновляются («Проверить обновления» так и скажет).
 
 Чтобы выпустить версию:
 
-1. Сгенерировать ключ один раз: `cargo tauri signer generate -w ~/.tauri/clawd.key`
-   и вписать содержимое `clawd.key.pub` в `plugins.updater.pubkey` (сейчас там временный ключ
-   из PR — его приватная часть не в репозитории, так что релизы им подписать нельзя).
-2. Добавить в секреты репозитория `TAURI_SIGNING_PRIVATE_KEY` (содержимое `clawd.key`) и,
-   если у ключа есть пароль, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+1. Сгенерировать ключ один раз: `cargo tauri signer generate -w ~/.tauri/clawd.key`.
+2. В настройках репозитория (Settings → Secrets and variables → Actions) добавить переменную
+   `TAURI_UPDATER_PUBKEY` с содержимым `clawd.key.pub`, секрет `TAURI_SIGNING_PRIVATE_KEY`
+   с содержимым `clawd.key` и, если у ключа есть пароль, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 3. Поднять `version` в `tauri.conf.json` и `Cargo.toml`, затем `git tag v0.2.1 && git push --tags`.
    Workflow `.github/workflows/release.yml` соберёт установщики и `latest.json` и опубликует релиз.
+   Без переменной `TAURI_UPDATER_PUBKEY` он остановится с понятной ошибкой.
 
-Локальная сборка с подписью: `TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/clawd.key)" cargo tauri build`.
+Локальная сборка с подписью и обновлениями:
+
+```sh
+printf '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"%s"}}}' \
+  "$(cat ~/.tauri/clawd.key.pub)" > release.conf.json
+TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/clawd.key)" cargo tauri build --config release.conf.json
+```
 
 Иконки генерируются из спрайта: `python3 scripts/make_icons.py` (нужен Pillow).
 
