@@ -663,10 +663,22 @@ pub fn is_installed(path: &Path) -> bool {
     fs::read_to_string(path).is_ok_and(|s| s.contains(MARKER))
 }
 
+/// Whether the link already routes permission questions to Clawd (versions before
+/// 0.2 didn't).
+pub fn has_permission_hook(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|s| s.contains(PERMISSION_MARKER))
+}
+
 /// Adds (with a token) or removes Clawd's hooks and status line, keeping everything
 /// else intact. `backup` is the user's own status line saved by an earlier install;
-/// returns the one to keep now. An unchanged file isn't rewritten.
-pub fn set_installed(path: &Path, token: Option<&str>, backup: Option<Value>) -> Result<Option<Value>, String> {
+/// returns the one to keep now. Without `wrap_status_line` a status line Clawd doesn't
+/// wrap yet is left alone. An unchanged file isn't rewritten.
+pub fn set_installed(
+    path: &Path,
+    token: Option<&str>,
+    backup: Option<Value>,
+    wrap_status_line: bool,
+) -> Result<Option<Value>, String> {
     let original = match fs::read_to_string(path) {
         Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -680,7 +692,8 @@ pub fn set_installed(path: &Path, token: Option<&str>, backup: Option<Value>) ->
     };
     let mut updated = with_hooks(settings, token)?;
     let root = updated.as_object_mut().ok_or("settings.json is not a JSON object")?;
-    let backup = with_status_line(root, token, backup);
+    let leave_alone = token.is_some() && !wrap_status_line && !root.get("statusLine").is_some_and(is_clawd_status);
+    let backup = if leave_alone { backup } else { with_status_line(root, token, backup) };
     let pretty = serde_json::to_string_pretty(&updated).map_err(|e| e.to_string())? + "\n";
     if original.as_deref() == Some(pretty.as_str()) {
         return Ok(backup);
@@ -735,7 +748,7 @@ mod tests {
         let dir = temp_dir("broken");
         let path = dir.join("settings.json");
         fs::write(&path, "{ not json").unwrap();
-        assert!(set_installed(&path, Some("abc"), None).is_err());
+        assert!(set_installed(&path, Some("abc"), None, true).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
         assert!(!dir.join("settings.json.clawd-backup").exists());
     }
@@ -745,13 +758,30 @@ mod tests {
         let dir = temp_dir("install");
         let path = dir.join("settings.json");
         fs::write(&path, r#"{"theme":"dark"}"#).unwrap();
-        assert_eq!(set_installed(&path, Some("tok123"), None).unwrap(), None);
+        assert_eq!(set_installed(&path, Some("tok123"), None, true).unwrap(), None);
         assert!(is_installed(&path));
         assert_eq!(fs::read_to_string(dir.join("settings.json.clawd-backup")).unwrap(), r#"{"theme":"dark"}"#);
-        set_installed(&path, None, None).unwrap();
+        set_installed(&path, None, None, true).unwrap();
         assert!(!is_installed(&path));
         let restored: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(restored, json!({"theme": "dark"}));
+    }
+
+    #[test]
+    fn refreshing_a_link_leaves_the_users_status_line_alone() {
+        let dir = temp_dir("refresh");
+        let path = dir.join("settings.json");
+        let users = json!({ "type": "command", "command": "~/bin/line.sh" });
+        fs::write(&path, json!({ "statusLine": users.clone() }).to_string()).unwrap();
+        assert_eq!(set_installed(&path, Some("tok"), None, false).unwrap(), None);
+        let after: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(after["statusLine"], users);
+        assert!(is_installed(&path) && has_permission_hook(&path));
+        // Once the user linked with the wrapper, a refresh keeps it up to date.
+        set_installed(&path, Some("tok"), None, true).unwrap();
+        let backup = set_installed(&path, Some("tok2"), Some(users.clone()), false).unwrap();
+        assert_eq!(backup, Some(users));
+        assert!(fs::read_to_string(&path).unwrap().contains("/status/tok2"));
     }
 
     #[test]

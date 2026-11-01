@@ -312,7 +312,7 @@ pub fn build(app: &App, state: Arc<AppState>) -> tauri::Result<()> {
             "pick" => pick_claude(app.clone(), state.clone(), items.clone()),
             "hooks" => {
                 let on = items.link.is_checked().unwrap_or(false);
-                let phrase = match link_claude_code(&state, on) {
+                let phrase = match link_claude_code(&state, on, true) {
                     Ok(()) if on => "hooks_on",
                     Ok(()) => "hooks_off",
                     Err(e) => {
@@ -372,10 +372,22 @@ fn state_ref(app: &App) -> Arc<AppState> {
 }
 
 /// Adds or removes Clawd's hooks and status line in Claude Code's settings.
-pub fn link_claude_code(state: &AppState, on: bool) -> Result<(), String> {
+/// `fresh` is the user clicking "Connect": event hooks, the permission card and the
+/// status line wrapper. Otherwise (at startup) only what an earlier version set up is
+/// brought up to date, so an upgrade doesn't take over the user's status line or
+/// start answering Claude Code's permission prompts without being asked.
+pub fn link_claude_code(state: &AppState, on: bool, fresh: bool) -> Result<(), String> {
     let path = hooks::settings_path().ok_or_else(|| "home directory not found".to_string())?;
+    if on && !fresh && !hooks::has_permission_hook(&path) {
+        // Linked before permission cards existed: Claude Code keeps asking as before
+        // until the user turns the card on in the tray.
+        state.update(|s| s.ask_permissions = false);
+        if let Some(hub) = state.hub.get() {
+            hub.ask_permissions.store(false, Ordering::Relaxed);
+        }
+    }
     let backup = state.settings.lock().unwrap().statusline_backup.clone();
-    let backup = hooks::set_installed(&path, on.then_some(state.token.as_str()), backup)?;
+    let backup = hooks::set_installed(&path, on.then_some(state.token.as_str()), backup, fresh)?;
     state.update(|s| s.statusline_backup = backup);
     Ok(())
 }

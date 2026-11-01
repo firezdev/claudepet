@@ -393,10 +393,11 @@ fn main() {
             if let Err(e) = hooks::serve(state.token.clone(), hub) {
                 eprintln!("Claude Code hook endpoint unavailable: {e}");
             }
-            // Already linked: bring the hooks up to date with this version (new events,
-            // the status line for limits). An unchanged settings.json isn't touched.
+            // Already linked: bring the hooks up to date with this version (new events),
+            // without taking over anything the user didn't link. An unchanged
+            // settings.json isn't touched.
             if hooks::settings_path().is_some_and(|p| hooks::is_installed(&p)) {
-                if let Err(e) = tray::link_claude_code(&state, true) {
+                if let Err(e) = tray::link_claude_code(&state, true, false) {
                     eprintln!("Claude Code hooks: {e}");
                 }
             }
