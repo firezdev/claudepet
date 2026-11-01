@@ -563,13 +563,29 @@ fn permission_command(token: &str) -> String {
 
 /// The status line hands its input (which has the plan limits) to Clawd and then
 /// on to the user's own status line command, if they had one.
+/// How the wrapper hands the status line input on to the user's own command.
+const WRAPPED_PREFIX: &str = "printf '%s' \"$input\" | { ";
+const WRAPPED_SUFFIX: &str = "\n}";
+
 fn status_command(token: &str, original: Option<&str>) -> String {
     let post =
         format!("curl -s -m 1 -o /dev/null -H Content-Type:application/json --data-binary @- http://{STATUS_MARKER}{token}");
     match original {
-        Some(cmd) => format!("input=$(cat); printf '%s' \"$input\" | {post}; printf '%s' \"$input\" | {{ {cmd}\n}}"),
+        Some(cmd) => format!("input=$(cat); printf '%s' \"$input\" | {post}; {WRAPPED_PREFIX}{cmd}{WRAPPED_SUFFIX}"),
         None => format!("{post} || true"),
     }
+}
+
+/// The user's own status line, rebuilt from Clawd's wrapper around it: for when the
+/// backup in Clawd's settings is gone. None when the wrapper wraps nothing.
+fn unwrap_status(line: &Value) -> Option<Value> {
+    let command = str_field(line, "command");
+    let after_post = &command[command.find(STATUS_MARKER)?..];
+    let start = after_post.find(WRAPPED_PREFIX)? + WRAPPED_PREFIX.len();
+    let original = after_post[start..].strip_suffix(WRAPPED_SUFFIX)?;
+    let mut users = line.clone();
+    users["command"] = json!(original);
+    Some(users)
 }
 
 fn is_clawd_status(line: &Value) -> bool {
@@ -580,7 +596,7 @@ fn is_clawd_status(line: &Value) -> bool {
 /// back. Returns the backup to keep.
 fn with_status_line(settings: &mut Map<String, Value>, token: Option<&str>, backup: Option<Value>) -> Option<Value> {
     let users = match settings.get("statusLine").cloned() {
-        Some(line) if is_clawd_status(&line) => backup,
+        Some(line) if is_clawd_status(&line) => backup.or_else(|| unwrap_status(&line)),
         other => other,
     };
     let Some(token) = token else {
@@ -868,6 +884,15 @@ mod tests {
         assert_eq!(again, Some(users.clone()));
         assert_eq!(str_field(&root["statusLine"], "command").matches("/status/").count(), 1);
         assert_eq!(with_status_line(root, None, again), None);
+        assert_eq!(root["statusLine"], users);
+
+        // Clawd's own settings lost the backup: the user's line comes back out of the wrapper.
+        let mut wrapped = json!({ "statusLine": users.clone() });
+        let root = wrapped.as_object_mut().unwrap();
+        with_status_line(root, Some("tok"), None);
+        assert_eq!(with_status_line(root, Some("tok2"), None), Some(users.clone()));
+        assert!(str_field(&root["statusLine"], "command").contains("~/bin/line.sh"));
+        assert_eq!(with_status_line(root, None, None), None);
         assert_eq!(root["statusLine"], users);
 
         let mut empty = json!({});
