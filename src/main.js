@@ -114,8 +114,10 @@ const UI = {
     week: "Week",
   },
 };
-// Commands that delete, kill, power off or rewrite disks get a red warning.
-const DANGER = /\b(rm|rmdir|del|erase|kill|killall|pkill|taskkill|stop-process|remove-item|shutdown|reboot|poweroff|halt|mkfs|format|dd|chmod|chown|truncate|shred|wipefs|diskpart|reg\s+delete)\b|>\s*\/dev\/|:\(\)\s*\{/i;
+// Commands that delete, kill, move or rename, power off, rewrite disks or run downloaded
+// code get a red warning.
+const DANGER =
+  /\b(rm|rmdir|del|erase|kill|killall|pkill|taskkill|stop-process|remove-item|remove-itemproperty|clear-content|mv|move|move-item|ren|rename|rename-item|shutdown|reboot|poweroff|halt|mkfs|format|dd|chmod|chown|truncate|shred|wipefs|diskpart|reg\s+delete|set-executionpolicy|iex|invoke-expression)\b|\|\s*(sudo\s+)?(sh|bash|zsh|dash|pwsh|powershell)\b|>\s*\/dev\/|:\(\)\s*\{/i;
 let pendingCommand = null;
 let outputOpen = false;
 // Reminders that went off and wait for "Done"; the first one is on the card.
